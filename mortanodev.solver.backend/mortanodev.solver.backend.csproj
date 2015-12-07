@@ -55,7 +55,6 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Util\EnumerableExtensions.cs" />
     <Compile Include="Util\EnumeratorExtensions.cs" />
-    <Compile Include="Util\ListExtensions.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />

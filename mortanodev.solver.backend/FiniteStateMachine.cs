@@ -4,14 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-using MathNet.Numerics.LinearAlgebra;
-
 namespace mortanodev.solver.backend
 {
     /// <summary>
     /// Different types of FSM
     /// </summary>
-    public enum FSMType
+    public enum FsmType
     {
         /// <summary>
         /// A deterministic state machine, meaning that there is exactly one transition per state
@@ -38,12 +36,11 @@ namespace mortanodev.solver.backend
         public class State
         {
             /// <summary>
-            /// The unique ID of this state
+            /// The unique Id of this state
             /// </summary>
-            public int ID
+            public int Id
             {
                 get;
-                private set;
             }
 
             /// <summary>
@@ -52,12 +49,11 @@ namespace mortanodev.solver.backend
             public bool IsAccepting
             {
                 get;
-                private set;
             }
 
             public State( int id, bool accepts )
             {
-                ID = id;
+                Id = id;
                 IsAccepting = accepts;
             }
         }
@@ -73,7 +69,6 @@ namespace mortanodev.solver.backend
             public State Start
             {
                 get;
-                private set;
             }
 
             /// <summary>
@@ -82,7 +77,6 @@ namespace mortanodev.solver.backend
             public State End
             {
                 get;
-                private set;
             }
 
             /// <summary>
@@ -91,7 +85,6 @@ namespace mortanodev.solver.backend
             public char Symbol
             {
                 get;
-                private set;
             }
 
             public Transition(State start, State end, char symbol)
@@ -99,6 +92,118 @@ namespace mortanodev.solver.backend
                 Start = start;
                 End = end;
                 Symbol = symbol;
+            }
+
+            public override bool Equals(object obj)
+            {
+                var asTransition = obj as Transition;
+                if (asTransition == null) return false;
+                if (Start != asTransition.Start) return false;
+                if (End != asTransition.End) return false;
+                return Symbol == asTransition.Symbol;
+            }
+
+            public override int GetHashCode()
+            {
+                var hash = Start.GetHashCode();
+                hash ^= End.GetHashCode() * 17;
+                hash ^= Symbol * 17;
+                return hash;
+            }
+        }
+
+        /// <summary>
+        /// A partition of states used for minimizing the FSM. This is essentially an integer vector,
+        /// but Math.NET does not support those, so we have to roll our own...
+        /// </summary>
+        private class StatePartition
+        {
+
+            #region Properties
+
+            /// <summary>
+            /// The elements of this state partition that indicate the partitions that a state leads into
+            /// when traversing from that state using symbols from the alphabet. 
+            /// </summary>
+            private int[] Elements
+            {
+                get;
+            }
+
+            /// <summary>
+            /// Index operator
+            /// </summary>
+            /// <param name="idx">Index</param>
+            /// <returns>Element at idx</returns>
+            public int this[int idx]
+            {
+                get
+                {
+                    return Elements[idx];
+                }
+                set
+                {
+                    Elements[idx] = value;
+                }
+            }
+
+            #endregion
+
+            #region Constructors
+
+            /// <summary>
+            /// Creates a new StatePartition over the given alphabet. The state partition will contain
+            /// one element for each symbol in the given alphabet
+            /// </summary>
+            /// <param name="alphabet">Alphabet to use for the partition</param>
+            public StatePartition(Alphabet alphabet)
+            {
+                Elements = new int[alphabet.Cardinality];
+            }
+
+            #endregion
+
+            #region PublicMethods
+
+            public override bool Equals(object obj)
+            {
+                var asStatePartition = obj as StatePartition;
+                return asStatePartition != null && asStatePartition.Elements.SequenceEqual(Elements);
+            }
+
+            public override int GetHashCode()
+            {
+                var hash = 0;
+                foreach (var element in Elements) hash ^= element * 17;
+                return hash;
+            }
+
+            #endregion
+
+        }
+
+        /// <summary>
+        /// Equality comparer for IEnumerable
+        /// </summary>
+        /// <typeparam name="T">Element type</typeparam>
+        private class EnumerableComparer<T> : IEqualityComparer<IEnumerable<T>>
+        {
+            public bool Equals(IEnumerable<T> x, IEnumerable<T> y)
+            {
+                if (x == null && y == null) return true;
+                if (x == null || y == null) return false;
+                return x.SequenceEqual(y);
+            }
+
+            public int GetHashCode(IEnumerable<T> obj)
+            {
+                var hash = 0;
+                foreach(var elem in obj)
+                {
+                    if (elem == null) continue;
+                    hash ^= elem.GetHashCode() * 17;
+                }
+                return hash;
             }
         }
 
@@ -110,7 +215,6 @@ namespace mortanodev.solver.backend
         public Alphabet Alphabet
         {
             get;
-            private set;
         }
 
         /// <summary>
@@ -156,7 +260,7 @@ namespace mortanodev.solver.backend
         /// <summary>
         /// The type of this FSM
         /// </summary>
-        public FSMType Type
+        public FsmType Type
         {
             get;
             private set;
@@ -178,7 +282,7 @@ namespace mortanodev.solver.backend
             StartingState = startState;
             Transitions = transitions;
 
-            Type = CalculateIsND() ? FSMType.NonDeterministic : FSMType.Deterministic;
+            Type = CalculateIsNonDeterministic() ? FsmType.NonDeterministic : FsmType.Deterministic;
         }
 
         #endregion
@@ -221,23 +325,24 @@ namespace mortanodev.solver.backend
             }
 
             //Check that accepted states are not too many
-            if (acceptedStates.Count() >= numberOfStates) throw new ArgumentException(nameof(acceptedStates) + " contains more states than the state count!");
+            var acceptedStatesArray = acceptedStates as int[] ?? acceptedStates.ToArray();
+            if (acceptedStatesArray.Count() >= numberOfStates) throw new ArgumentException(nameof(acceptedStates) + " contains more states than the state count!");
 
             //Check that all accepted states are in range
-            if( acceptedStates.Any(s => s < 0 || s >= numberOfStates) )
+            if( acceptedStatesArray.Any(s => s < 0 || s >= numberOfStates) )
             {
                 throw new ArgumentException(nameof(acceptedStates) + " contains out of range states!");
             }
 
             //Check that all transitions are valid
-            Func<Tuple<int, int, char>, bool> transitionInvalid = (t) =>
+            Func<Tuple<int, int, char>, bool> transitionInvalid = t =>
             {
                 if (t.Item1 < 0 || t.Item1 >= numberOfStates) return true;
                 if (t.Item2 < 0 || t.Item2 >= numberOfStates) return true;
-                if (!alphabet.Contains(t.Item3)) return true;
-                return false;
+                return !alphabet.Contains(t.Item3);
             };
-            var invalidTransitions = transitions.Where(transitionInvalid).ToList();
+            var transitionsArray = transitions as Tuple<int, int, char>[] ?? transitions.ToArray();
+            var invalidTransitions = transitionsArray.Where(transitionInvalid).ToList();
             if(invalidTransitions.Count > 0)
             {
                 Log.Error("Invalid transitions:");
@@ -250,14 +355,14 @@ namespace mortanodev.solver.backend
 
             //Everything is valid, we can safely create the object
 
-            var states = Enumerable.Range(0, numberOfStates).Select(id => new State(id, acceptedStates.Any(ac => ac == id))).ToArray();
-            var accepted = acceptedStates.Select(id => states.First(s => s.ID == id)).ToArray();
-            var start = states.First(s => s.ID == startState);
+            var states = Enumerable.Range(0, numberOfStates).Select(id => new State(id, acceptedStatesArray.Any(ac => ac == id))).ToArray();
+            var accepted = acceptedStatesArray.Select(id => states.First(s => s.Id == id)).ToArray();
+            var start = states.First(s => s.Id == startState);
             
-            var trans = transitions.Select(t =>
+            var trans = transitionsArray.Select(t =>
             {
-                var sState = states.First(s => s.ID == t.Item1);
-                var eState = states.First(s => s.ID == t.Item2);
+                var sState = states.First(s => s.Id == t.Item1);
+                var eState = states.First(s => s.Id == t.Item2);
                 return new Transition(sState, eState, t.Item3);
             }).ToArray();
 
@@ -265,33 +370,70 @@ namespace mortanodev.solver.backend
         }
 
         /// <summary>
+        /// Turns this FSM into a deterministic state machine, if it isn't already deterministic
+        /// </summary>
+        public void MakeDeterministic()
+        {
+            if (Type == FsmType.Deterministic) return;
+
+
+
+            Type = FsmType.Deterministic;
+        }
+
+        /// <summary>
         /// Minimizes this FSM if it is not already minimal. Only works if this FSM is deterministic!
         /// </summary>
         public void Minimize()
         {
-            if (Type != FSMType.Deterministic) throw new Exception("Minimization only works on deterministic state machines!");
+            if (Type != FsmType.Deterministic) throw new Exception("Minimization only works on deterministic state machines!");
             if (_hasBeenMinimized) return;
 
-            var statePartitionsOld = States.GroupBy(s => s.IsAccepting);
+            var statePartitionsOld = States.GroupAndSplit(s => s.IsAccepting).ToList();
 
-            var stateMatrixCur = Matrix<int>.Build.Dense(States.Length, Alphabet.Symbols.Count);
+            var statePartitionMatrix = PartitionStates(statePartitionsOld);
+            
+            var statePartitionsNew = SplitStates(statePartitionsOld, statePartitionMatrix).ToList();
 
-            foreach(var transition in Transitions)
-            { 
-                var targetStateId = statePartitionsOld.FirstIndexWhere(p => p.Contains(transition.End));
-                var rowIdx = transition.Start.ID;
-                var columnIdx = Alphabet.Symbols.FirstIndexOf(transition.Symbol);
-
-                stateMatrixCur[rowIdx, columnIdx] = targetStateId;
-            }
-
-            var newPartitionGroups = stateMatrixCur.EnumerateRows().Distinct().ToArray();
-            var statePartitionsNew = States.GroupBy(s => newPartitionGroups[s.ID]);
-
-            while(!statePartitionsNew.SequenceEqual(statePartitionsOld))
+            //As long as there are differences between the last state partition and the current one, we continue
+            //running the minimizing algorithm
+            while(!statePartitionsNew.SequenceEqual(statePartitionsOld, StateCollectionComparer))
             {
+                statePartitionsOld = statePartitionsNew;
 
+                statePartitionMatrix = PartitionStates(statePartitionsOld);
+
+                statePartitionsNew = SplitStates(statePartitionsOld, statePartitionMatrix);
             }
+
+            //Now we have reached equilibrium and the current state partition is the minimal one. We now have to 
+            //create new states and new transitions from this partition!
+
+            //1) Each state partition that contains a state that accepts becomes a new accepting state
+            var acceptingMask = statePartitionsNew.Select(p => p.FirstIndexWhere(s => s.IsAccepting) != -1).ToArray();
+            var minimalStates = Enumerable.Range(0, acceptingMask.Length).Select(id => new State(id, acceptingMask[id])).ToArray();
+
+            //2) The starting state is the state partition that contained the initial starting state
+            var startingStateIdx = statePartitionsNew.FirstIndexWhere(p => p.FirstIndexWhere(s => s == StartingState) != -1);
+
+            //3) The state partition matrix contains all the transitions between the states
+            var newTransitions = new List<Transition>();
+            var partitionsArray = statePartitionsNew.ToArray();
+            for(int i = 0; i < minimalStates.Length; i++)
+            {
+                //We have to find one of the old states that have been combined into this new minimal state
+                //For that state, we can then query the transitions from the statePartitionMatrix
+                var oldStateInThisState = partitionsArray[i].First();
+                var statePartitionRow = statePartitionMatrix[oldStateInThisState.Id];
+                newTransitions.AddRange(
+                    Alphabet.Symbols.Select((t, j) => new Transition(minimalStates[i], minimalStates[statePartitionRow[j]], t))
+                );
+            }
+
+            States = minimalStates;
+            StartingState = minimalStates[startingStateIdx];
+            AcceptedStates = States.Where(s => s.IsAccepting).ToArray();
+            Transitions = newTransitions.ToArray();
         }
 
         #endregion
@@ -302,19 +444,18 @@ namespace mortanodev.solver.backend
         /// Calculates whether this FSM is ND or not
         /// </summary>
         /// <returns>True if this FSM is ND</returns>
-        private bool CalculateIsND()
+        private bool CalculateIsNonDeterministic()
         {
             //If any of the states does not have one transition for each of the symbols in the alphabet, this FSM
             //is non-deterministic
-
-            //TODO Make this algorithm less stupid
+            
             var transitions = new List<Transition>(Transitions);
 
             foreach(var state in States)
             {
                 foreach(var symbol in Alphabet.Symbols)
                 {
-                    var matchingTransitionIdx = transitions.FirstIndexOf(t => t.Start == state && t.Symbol == symbol);
+                    var matchingTransitionIdx = transitions.FirstIndexWhere(t => t.Start == state && t.Symbol == symbol);
                     if (matchingTransitionIdx == -1) return true;
                     transitions.RemoveAt(matchingTransitionIdx);
                 }
@@ -324,6 +465,46 @@ namespace mortanodev.solver.backend
             return transitions.Count != 0;
         }
 
+        /// <summary>
+        /// Performs a state partition by applying all transitions to the states based on the given state
+        /// partition. The values are stored inside a matrix where each entry shows the index of the resulting
+        /// state group that this state leads into after applying a transition with a specific symbol of the
+        /// alphabet.
+        /// </summary>
+        /// <param name="oldStatePartition">The previous state partition</param>
+        /// <returns>Partition matrix</returns>
+        private List<StatePartition> PartitionStates(IReadOnlyCollection<IEnumerable<State>> oldStatePartition)
+        {
+            var matrix = States.Select(state => new StatePartition(Alphabet)).ToList();
+            foreach (var transition in Transitions)
+            {
+                var targetStateId = oldStatePartition.FirstIndexWhere(p => p.Contains(transition.End));
+                var rowIdx = transition.Start.Id;
+                var columnIdx = Alphabet.Symbols.FirstIndexOf(transition.Symbol);
+
+                matrix[rowIdx][columnIdx] = targetStateId;
+            }
+            return matrix;
+        }
+
+        /// <summary>
+        /// Splits the given set of states into possibly smaller sets using the list of state partitions. Each set of states
+        /// in stateSets will be split separately, making sure that no elements can move from multiple sets into one new set
+        /// </summary>
+        /// <param name="stateSets">Set of grouped states</param>
+        /// <param name="partition">State partition matrix</param>
+        /// <returns>New set of grouped states</returns>
+        private List<IEnumerable<State>> SplitStates(IEnumerable<IEnumerable<State>> stateSets, List<StatePartition> partition)
+        {
+            var ret = new List<IEnumerable<State>>();
+            foreach(var stateGroup in stateSets)
+            {
+                var split = stateGroup.GroupAndSplit(s => partition[s.Id]);
+                ret.AddRange(split);
+            }
+            return ret;
+        }
+
         #endregion
 
         #endregion
@@ -331,6 +512,7 @@ namespace mortanodev.solver.backend
         #region Members
 
         private static readonly ILog Log = LogManager.GetLogger(typeof(FSM));
+        private static readonly IEqualityComparer<IEnumerable<State>> StateCollectionComparer = new EnumerableComparer<State>();
 
         private bool _hasBeenMinimized = false;
 

@@ -57,14 +57,53 @@ namespace mortanodev.solver.backend.Util
         /// <typeparam name="T">Element type</typeparam>
         /// <param name="range">Range to group</param>
         /// <param name="keySelector">Key selector to group by</param>
+        /// <param name="equalityComparer">Optional equality comparison object for the keys</param>
         /// <returns>Range of ranges after grouping</returns>
-        public static IEnumerable<IEnumerable<T>> GroupAndSplit<T>(this IEnumerable<T> range, Func<T, bool> keySelector)
+        public static IEnumerable<IEnumerable<T>> GroupAndSplit<T, Key>(this IEnumerable<T> range, Func<T, Key> keySelector, IEqualityComparer<Key> equalityComparer = null)
         {
-            var grouping = range.GroupBy(keySelector);
-            foreach(var group in grouping)
+            var grouping = range.GroupBy(keySelector, equalityComparer);
+            return grouping.Select(g => g.GetEnumerator().Enumerate());
+        }
+
+        /// <summary>
+        /// Returns true if the two sequences are permutations of each other, i.e. they contain the same elements but
+        /// not neccesarily in the same order. 
+        /// </summary>
+        /// <typeparam name="T">Element type</typeparam>
+        /// <param name="thisRange">First range</param>
+        /// <param name="otherRange">Second range</param>
+        /// <returns>True if the two ranges contain the same elements regardless of order</returns>
+        public static bool PermutationEquals<T>(this IEnumerable<T> thisRange, IEnumerable<T> otherRange)
+        {
+            var p1 = thisRange.ToArray();
+            var p2 = otherRange.ToArray();
+            if (p1.Length != p2.Length) return false;
+            foreach(var outer in p1)
             {
-                yield return group.GetEnumerator().Enumerate();
+                bool match = false;
+                foreach(var inner in p2)
+                {
+                    if(inner.Equals(outer))
+                    {
+                        match = true;
+                        break;
+                    }
+                }
+                if (!match) return false;
             }
+            return true;
+        }
+
+        /// <summary>
+        /// Returns true if the given enumerable is empty, otherwise false
+        /// </summary>
+        /// <typeparam name="T">Element type</typeparam>
+        /// <param name="thisRange">Enumerable</param>
+        /// <returns>True if the enumerable is empty, otherwise false</returns>
+        public static bool IsEmpty<T>(this IEnumerable<T> thisRange)
+        {
+            foreach (var elem in thisRange) return false;
+            return true;
         }
 
     }

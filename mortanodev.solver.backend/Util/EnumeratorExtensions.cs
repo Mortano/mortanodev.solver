@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using System.Collections.Generic;
 
 namespace mortanodev.solver.backend.Util
 {
@@ -16,7 +12,10 @@ namespace mortanodev.solver.backend.Util
         /// <returns>IEnumerable over the enumerator</returns>
         public static IEnumerable<T> Enumerate<T>(this IEnumerator<T> enumerator)
         {
-            while (enumerator.MoveNext()) yield return enumerator.Current;
+            //Using a list here because we might want to enumerate multiple times
+            var ret = new List<T>();
+            while (enumerator.MoveNext()) ret.Add(enumerator.Current);
+            return ret;
         }
 
     }

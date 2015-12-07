@@ -17,10 +17,21 @@ namespace mortanodev.solver.backend
         /// <summary>
         /// Collection of unique symbols that make up the alphabet
         /// </summary>
-        public IReadOnlyCollection<char> Symbols
+        public IReadOnlyList<char> Symbols
         {
             get;
             private set;
+        }
+
+        /// <summary>
+        /// Returns the cardinality (i.e. the number of symbols) of this alphabet
+        /// </summary>
+        public int Cardinality
+        {
+            get
+            {
+                return Symbols.Count;
+            }
         }
 
         #endregion
