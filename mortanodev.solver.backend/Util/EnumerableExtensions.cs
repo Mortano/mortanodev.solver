@@ -106,5 +106,21 @@ namespace mortanodev.solver.backend.Util
             return true;
         }
 
+        /// <summary>
+        /// Converts a range into a HashSet
+        /// </summary>
+        /// <typeparam name="T">Element type</typeparam>
+        /// <param name="thisRange">Range</param>
+        /// <returns>HashSet containing unique elements of the range</returns>
+        public static HashSet<T> ToHashSet<T>(this IEnumerable<T> thisRange)
+        {
+            var ret = new HashSet<T>();
+            foreach (var elem in thisRange)
+            {
+                ret.Add(elem);
+            }
+            return ret;
+        }
+
     }
 }

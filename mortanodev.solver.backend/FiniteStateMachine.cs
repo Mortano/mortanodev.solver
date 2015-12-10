@@ -326,10 +326,11 @@ namespace mortanodev.solver.backend
 
             //Check that accepted states are not too many
             var acceptedStatesArray = acceptedStates as int[] ?? acceptedStates.ToArray();
-            if (acceptedStatesArray.Count() >= numberOfStates) throw new ArgumentException(nameof(acceptedStates) + " contains more states than the state count!");
+            if (acceptedStatesArray.Count() > numberOfStates) throw new ArgumentException(nameof(acceptedStates) + " contains more states than the state count!");
 
             //Check that all accepted states are in range
-            if( acceptedStatesArray.Any(s => s < 0 || s >= numberOfStates) )
+            if( acceptedStatesArray.Length != 0 &&
+                acceptedStatesArray.Any(s => s < 0 || s >= numberOfStates) )
             {
                 throw new ArgumentException(nameof(acceptedStates) + " contains out of range states!");
             }
@@ -357,7 +358,7 @@ namespace mortanodev.solver.backend
 
             var states = Enumerable.Range(0, numberOfStates).Select(id => new State(id, acceptedStatesArray.Any(ac => ac == id))).ToArray();
             var accepted = acceptedStatesArray.Select(id => states.First(s => s.Id == id)).ToArray();
-            var start = states.First(s => s.Id == startState);
+            var start = states.FirstOrDefault(s => s.Id == startState);
             
             var trans = transitionsArray.Select(t =>
             {
@@ -370,15 +371,78 @@ namespace mortanodev.solver.backend
         }
 
         /// <summary>
-        /// Turns this FSM into a deterministic state machine, if it isn't already deterministic
+        /// Turns this FSM into a deterministic state machine, if it isn't already deterministic. The resulting FSM is not
+        /// guaranteed to be minimal!
         /// </summary>
         public void MakeDeterministic()
         {
             if (Type == FsmType.Deterministic) return;
 
+            /*
+                There are 3 cases:
 
+                1) This is the empty FSM
+                2) Transitions are underdefined, i.e. there exists a state that has less outgoing transitions than symbols in the alphabet
+                3) Transitions are overdefined, i.e. there exist two or more transitions from the same state with the same symbol
+
+                The first case is actually a separate case which can be handled at once. The other two cases can actually be mixed and
+                have to be handled in a specific order, that is first 2) and then 3). 2) can be handled by simply adding transitions into
+                a new garbage state, 3) has to be handled by powerset construction
+            */
 
             Type = FsmType.Deterministic;
+
+            if (States.Length == 0)
+            {
+                States = new[]
+                {
+                    new State(0, false) 
+                };
+
+                StartingState = States[0];
+
+                Transitions = Alphabet.Symbols.Select(s => new Transition(States[0], States[0], s)).ToArray();
+                return;
+            }
+
+            //2) Underdefined states
+            var transitionsByStartingState = Transitions.GroupAndSplit(t => t.Start);
+            var transitionsByStartingStateList = transitionsByStartingState as IList<IEnumerable<Transition>> ?? transitionsByStartingState.ToList();
+            var underdefinedStateTransitions =
+                transitionsByStartingStateList.Where(
+                    ts => !ts.Select(t => t.Symbol).Distinct().PermutationEquals(Alphabet.Symbols)).ToArray();
+
+            if (underdefinedStateTransitions.Length != 0)
+            {
+                var garbageState = new State(States.Last().Id + 1, false);
+                var allTransitions = new List<Transition>(Transitions);
+                foreach (var trans in underdefinedStateTransitions)
+                {
+                    var transitionsArray = trans as Transition[] ?? trans.ToArray();
+                    var fromState = transitionsArray[0].Start;
+                    var symbolsInTransitions = transitionsArray.Select(t => t.Symbol);
+                    var missingSymbols = Alphabet.Symbols.Where(s => !symbolsInTransitions.Contains(s));
+
+                    allTransitions.AddRange(missingSymbols.Select(missingSymbol => new Transition(fromState, garbageState, missingSymbol)));
+                }
+
+                Transitions = allTransitions.ToArray();
+                transitionsByStartingState = Transitions.GroupAndSplit(t => t.Start);
+                transitionsByStartingStateList = transitionsByStartingState as IList<IEnumerable<Transition>> ?? transitionsByStartingState.ToList();
+            }
+
+            //3) Overdefined states
+            var overdefinedStateTransitions = transitionsByStartingStateList.Where(ts =>
+            {
+                var transitionSymbols = ts.Select(t => t.Symbol).ToArray();
+                return transitionSymbols.Length != transitionSymbols.Distinct().Count();
+            });
+
+            if (overdefinedStateTransitions.Any())
+            {
+                PowersetConstruction(transitionsByStartingStateList);
+            }
+
         }
 
         /// <summary>
@@ -446,6 +510,10 @@ namespace mortanodev.solver.backend
         /// <returns>True if this FSM is ND</returns>
         private bool CalculateIsNonDeterministic()
         {
+            if (States.Length == 0) return true;
+            if (Transitions.Length == 0) return true;
+            if (Transitions.Length != States.Length*Alphabet.Cardinality) return true;
+
             //If any of the states does not have one transition for each of the symbols in the alphabet, this FSM
             //is non-deterministic
             
@@ -488,6 +556,64 @@ namespace mortanodev.solver.backend
         }
 
         /// <summary>
+        /// Constructs a powerset state machine from the current state machine and the given set of transitions, grouped
+        /// by their starting states
+        /// </summary>
+        /// <param name="transitionsByStartingStateList">Transitions grouped by starting state</param>
+        private void PowersetConstruction(IList<IEnumerable<Transition>> transitionsByStartingStateList)
+        {
+            //Powerset construction:
+            var powersetTransitions = new List<Transition>();
+            var hashSetComparer = new HashSetComparer<int>();
+            //Mapping of previous state tuples (List<int>) to new states
+            var powersetStates = new Dictionary<HashSet<int>, State>(hashSetComparer);
+
+            //First create all powerstates that are reachable. This is a subset of 2^N state combinations that arise from
+            //the initial states. A powerset state machine based upon a ND state machine with N states may have at maximum
+            //2^N states!
+            foreach (var transition in transitionsByStartingStateList)
+            {
+                var transitionsBySymbol = transition.GroupAndSplit(t => t.Symbol);
+                foreach (var trans in transitionsBySymbol)
+                {
+                    var powersetForTransition = trans.Select(t => t.End.Id).ToHashSet();
+                    State powersetState;
+                    if (!powersetStates.TryGetValue(powersetForTransition, out powersetState))
+                    {
+                        //Create a new powerstate that accepts only if at least one of the original states accepts
+                        var isPowersetStateAccepting =
+                            powersetForTransition.Select(id => States[id].IsAccepting).First(b => b);
+                        powersetState = new State(powersetStates.Count, isPowersetStateAccepting);
+                        powersetStates[powersetForTransition] = powersetState;
+                    }
+                }
+            }
+
+            //Now we have all possible powerstates that are actually used. From here, we can create all transitions
+            foreach (var powersetKeyVal in powersetStates)
+            {
+                var powerstateOldStates = powersetKeyVal.Key;
+                var startPowerstate = powersetKeyVal.Value;
+                foreach (var symbol in Alphabet.Symbols)
+                {
+                    //The new transition is the sum of all old transitions that start from any of the old states
+                    //in the current powerstate and that use the current symbol
+                    var oldTransitions = Transitions.Where(t => t.Symbol == symbol &&
+                                                                powerstateOldStates.Contains(t.Start.Id));
+                    var combinedEndStates = oldTransitions.Select(t => t.End.Id).ToHashSet();
+                    var endPowerstate = powersetStates.First(kv => kv.Key.SetEquals(combinedEndStates)).Value;
+
+                    powersetTransitions.Add(new Transition(startPowerstate, endPowerstate, symbol));
+                }
+            }
+
+            States = powersetStates.Values.ToArray();
+            AcceptedStates = States.Where(s => s.IsAccepting).ToArray();
+            StartingState = States.First(s => s.Id == 0);
+            Transitions = powersetTransitions.ToArray();
+        }
+
+        /// <summary>
         /// Splits the given set of states into possibly smaller sets using the list of state partitions. Each set of states
         /// in stateSets will be split separately, making sure that no elements can move from multiple sets into one new set
         /// </summary>
@@ -512,7 +638,7 @@ namespace mortanodev.solver.backend
         #region Members
 
         private static readonly ILog Log = LogManager.GetLogger(typeof(FSM));
-        private static readonly IEqualityComparer<IEnumerable<State>> StateCollectionComparer = new EnumerableComparer<State>();
+        private static readonly IEqualityComparer<IEnumerable<State>> StateCollectionComparer = new EnumerableComparer<State>();                 
 
         private bool _hasBeenMinimized = false;
 

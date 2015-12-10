@@ -287,7 +287,6 @@ namespace mortanodev.solver.backend.test
         }
 
         [TestMethod]
-        [ExpectedException(typeof(ArgumentException))]
         public void TestConstruction_NoStates()
         {
             var alphabet = Alphabet.Create(new[] { '0', '1' });
@@ -505,6 +504,29 @@ namespace mortanodev.solver.backend.test
             fsm.Minimize();
 
             Assert.AreEqual(statesAfterMinimizingOnce, fsm.States.Length);
+        }
+
+        [TestMethod]
+        public void TestMakeDeterministic_ZeroStates()
+        {
+            var alphabet = Alphabet.Create(new[]{'a', 'b'});
+            var emptyFsm = FSM.Create(alphabet, 0, Enumerable.Empty<int>(), 0, Enumerable.Empty<Tuple<int, int, char>>());
+
+            Assert.IsTrue(emptyFsm.Type == FsmType.NonDeterministic);
+
+            emptyFsm.MakeDeterministic();
+
+            Assert.AreEqual(1, emptyFsm.States.Length);
+            Assert.AreEqual(0, emptyFsm.StartingState.Id);
+            Assert.AreEqual(0, emptyFsm.AcceptedStates.Length);
+            Assert.AreEqual(alphabet.Cardinality, emptyFsm.Transitions.Length);
+
+            var onlyState = emptyFsm.States[0];
+
+            foreach (var symbol in alphabet.Symbols)
+            {
+                Assert.IsTrue(emptyFsm.Transitions.FirstIndexWhere(t => t.Start == onlyState && t.End == onlyState && t.Symbol == symbol) != -1);
+            }
         }
 
     }
